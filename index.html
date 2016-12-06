@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0, user-scalable=yes"/>
+<link rel="stylesheet" href="style.css">
+<script src="https://d3js.org/d3.v3.min.js"></script>
+<script src="https://d3js.org/d3-collection.v1.min.js"></script>
+<script src="https://d3js.org/d3-dispatch.v1.min.js"></script>
+<script src="https://d3js.org/d3-dsv.v1.min.js"></script>
+<script src="https://d3js.org/d3-request.v1.min.js"></script>
+<script src="https://code.jquery.com/jquery-1.11.3.min.js"></script>
+<script type="text/javascript">
+
+//PCとスマーフォンの場合に応じてデータ表示の位置を調整するためのグローバル変数
+var svgY = 1500; //svgの下限 PC:1500 SmartPhone:1300
+var smartPhone = 0;
+var startX = 200; //横棒グラフのスタートX座標 PC:200 SmartPhone:150
+var offsetHeight = 338; //総人口、年少人口、生産年齢人口、老年人口のグループの最初のグループのY座標スタート位置調整
+var barHeight = 24; //横棒グラフの高さ(PCの時)
+var yearFontSize = 18; //年のフォントサイズ PC:18 SmartPhone:12
+var labelOffset = 0; //データ名称の調整用 PC:0 SmartPhone:18
+
+//区のデータ格納用配列（グローバル）
+var ku_data = new Array();
+var select_ku = 0; //現在選択されている区Noの確保用
+var ku_address; //区役所地図ボタン押した時マップジャンプ用
+var ku_hp; //区役所HP
+
+function getKuData(){
+	var xhr = new XMLHttpRequest();
+	xhr.onload = function(){
+		var tempArray = xhr.responseText.split("\n");
+		for (var i=0;i<tempArray.length;i++){
+			var strText = tempArray[i].split(",");
+			ku_data.push(strText);
+		}
+	};
+	xhr.open("get", "ku_data_citycode.csv", true);
+	xhr.send(null);
+}
+getKuData();
+
+//マップ表示
+$(function() {
+    var g;
+	var width  = window.innerWidth;
+	var height = window.innerHeight;
+	//スマートフォンの時は変数調整
+	if ( width < 601) {
+		svgY = 1300;
+		smartPhone = width / 3;
+		startX = 146;
+		offsetHeight = 268;
+		barHeight  = 18.5;
+		yearFontSize = 12;
+		labelOffset = 0.8;
+	}
+	//scaleはスクリーンの大きさによって変更
+	var scale;
+	// svg要素を作成し、データの受け皿となるg要素を追加している
+	map = d3.select('#map')
+			.append('svg')
+			.attr('width', width)
+			.attr('height', svgY + smartPhone)
+			.append('g');
+	// 同じディレクトリにあるgeojsonファイルをhttp経由で読み込む    
+	d3.json("osakacity.json", function(json) {
+			var projection,path;
+			//ツールチップを生成
+			var tooltip=d3.select('body')
+						  .append('div')
+						  .attr('class', "tip")
+			//区長氏名表示「枠」を生成
+			var kucho_name=d3.select('body').append('div').attr('class', "kucho_name")
+			//区役所HPボタン生成
+			var ku_hpbtn=d3.select('body').append('div').attr('class', "ku_hpbtn")
+			ku_hpbtn.text("区役所HP")
+				  .on('click', function(d) {
+                  // clickされたら区HPにジャンプ
+					window.location.href=ku_hp;
+				  });
+			//区役所地図ボタン生成
+			var ku_btn=d3.select('body').append('div').attr('class', "ku_btn")
+			ku_btn.text("区役所地図")
+				  .on('click', function(d) {
+                  // clickされたらgoogle mapで住所検索
+					window.location.href="https://www.google.co.jp/maps/place/"+ku_address;
+				  });
+			// 投影を処理する関数を用意する。データからSVGのPATHに変換するため。
+			//その前に、スケールを計算。PCはブラウザが横長だからwidthをベースに計算する。でもスマホはブラウザが縦長だからheightをベースに計算する。
+			if (width>height){ 
+				scale = width*100;
+			} else {
+				scale = height*150;
+			}
+			projection = d3.geo.mercator()
+						   .scale(scale)
+						   .center(d3.geo.centroid(json))  // データから中心点を計算 .center(d3.geo.centroid(json)) 
+						   .translate([width/2, height/3]); //計算した中心点を左右中央、高さは1/3にセット
+			// pathジェネレータ関数
+			path = d3.geo.path().projection(projection);
+			// これがenterしたデータ毎に呼び出されpath要素のd属性にgeoJSONデータから変換した値を入れる                
+			map.selectAll('path')
+			   .data(json.features)
+			   .enter()
+			   .append('path')
+			   .attr('d', path)
+			   .style("fill", function(d){
+			           return d.properties.color;
+			          })
+			   .attr("fill", function(d){
+			   // 適当に色を塗る
+					return "hsl(0,0%,80%)";
+			   })
+			   .attr("stroke","white" )
+			   .on('mouseover', function(d){
+					// mouseoverの時のインタラクション
+					d3.select(this).style("fill", "red"); //選択区の色を赤に
+					select_ku = d.properties.index; //選択区のインデックスを取得
+					cityCode = ku_data[select_ku][3]; //区のcityCode取得
+					ku_address = ku_data[select_ku][4]; //区役所住所格納
+					ku_hp = ku_data[select_ku][5]; //区役所HPのURL格納
+					//区名を表示するツールチップを表示
+					var name=d.properties.name;
+					tooltip.style("visibility", "visible")
+						   .text(name)
+					//区長名
+					var kuchoname="区長 "+ku_data[select_ku][2];
+					kucho_name.text(kuchoname)
+					//RESASからデータゲット
+					getResas();
+			   })
+			   .on('mouseout', function(d){
+					var color2=d.properties.color;
+					d3.select(this).style("fill", color2);
+					tooltip.style("visibility", "hidden")
+			   })
+			   .on('click', function(d) {
+                  // clickされた時のインタラクション
+			   });
+	//区名表示ラベル追加
+	var xhr = new XMLHttpRequest();
+	xhr.onload = function(){
+		var tempArray = xhr.responseText.split("\n");
+		csvArray = new Array();
+		for(var i=0;i<tempArray.length;i++){
+			csvArray[i] = tempArray[i].split(",");
+			var data = csvArray[i];
+			var lonlat = [data[0], data[1]];
+			var xy = projection(lonlat);
+			//区名ラベル
+			map.append('text')
+			   .attr("class", "ku_name")
+			   .attr({
+			     x: xy[0]-20,
+				 y: xy[1],
+			    })
+			   .text(data[2]);
+		}
+	};	
+	xhr.open("get", "ku_label.csv", true);
+	xhr.send(null);
+	});
+});
+
+//RESAS
+var cityCode=27127; //初期値は北区
+var labelStock = [ ]; //データグループのラベル格納用
+var yearStock = [ ]; //横棒グラフの年格納用
+var valueStock = [ ]; //横棒グラフ格納用
+
+function getResas(){
+var url = "https://opendata.resas-portal.go.jp/api/v1-rc.1/population/composition/perYear?cityCode=" + cityCode + "&prefCode=27"
+	d3.request(url)
+	　.header("X-API-KEY", "APIキーをここに書いてください") //注意！サンプルなのでこのままでは動きません
+	　.mimeType("application/json")
+	　.response(function(xhr){ 
+		//データ読込んで配列に格納
+		loadData(xhr.responseText);
+		return JSON.parse(xhr.responseText) 
+	　　})
+	　.get(callback)
+}
+
+function callback(json){
+	console.log(json)
+}
+
+function loadData(json){
+	var data = null;
+	try {
+		jsonData = JSON.parse(json);
+		for ( var i=0; i<jsonData.result.data.length; i++){
+			labelStock[i] = jsonData.result.data[i].label; //ラベル
+			for ( var j=0; j<jsonData.result.data[i].data.length; j++){
+				var value = jsonData.result.data[i].data[j].value; //人口データ
+				var year = jsonData.result.data[i].data[j].year; //年
+				//valueを配列に格納
+				yearStock[i*13+j] = year + "年　" + value + "人";
+				valueStock[i*13+j] = value / 1000;
+			}
+		}
+		//グラフ更新・描画
+		updateGraph();
+		drawGraph();
+		updateYear();
+		drawYear();
+		updateLabel();
+		drawLabel();
+	} catch (e) {
+		console.log("parseの段階でエラーが出ました。");
+	}
+}
+
+function drawGraph(){
+	var offset = 0;
+	map.selectAll("rect")
+	  .data(valueStock)
+	  .enter()
+	  .append("rect")
+	  .attr("x", startX)
+	  .attr("y", function(d,i){
+			var m = i % 13; //データ１グループ13周期で余りを算出
+			if (m == 0) {
+				if ( i != 0 ) {
+					offset = offset + 1;
+				} else {
+					offset = 0;
+				}
+			}
+			return offset*offsetHeight + m*barHeight + 178 + smartPhone;
+	  })
+	  .attr("width", function(d,i){
+	    return d + "px";
+	  })
+	  .attr("height", "12px")
+}
+
+function drawYear(){
+	var offset = 0;
+	map.selectAll("text.year")
+	   .data(yearStock)
+	   .enter()
+	   .append("text")
+	   .attr("class", "year")
+	   .attr("x", 10)
+	   .attr("y", function(d,i){
+			var m = i % 13; //データ１グループ13周期で余りを算出
+			if (m == 0) {
+				if ( i != 0 ) {
+					offset = offset + 1;
+				} else {
+					offset = 0;
+				}
+			}
+			return offset*offsetHeight + m*barHeight + 178 + 8 + smartPhone; //テキストはちょっとY座標にプラスする（フォントの描画の関係）
+	   })
+	   .style("font-size", yearFontSize+"px")
+	   .text(function(d,i){
+		   return d;
+	   });
+}
+
+function drawLabel(){
+	var offset = 0;
+	map.selectAll("text.label")
+	   .data(labelStock)
+	   .enter()
+	   .append("text")
+	   .attr("class", "label")
+	   .attr("x", 6)
+	   .attr("y", function(d,i){
+		   return i*(barHeight+labelOffset)*14 + 166 + smartPhone;
+	   })
+	   .style("font-size", yearFontSize + 6 + "px")
+	   .style("font-weight", "bold")
+	   .text(function(d,i){
+		   return d;
+	   });
+}
+
+function updateGraph(){
+	map.selectAll("rect")
+	  .data(valueStock)
+	  .attr("width", function(d,i){
+	    return d+"px";
+	   })
+}
+
+function updateYear(){
+	map.selectAll("text.year")
+	   .data(yearStock)
+	   .text(function(d,i){
+		   return d;
+	   });
+}
+
+function updateLabel(){
+	map.selectAll("text.label")
+	   .data(labelStock)
+	   .text(function(d,i){
+		   return d;
+	   });
+}
+
+function removeGraph(){
+	map.selectAll("rect")
+	  .data(valueStock)
+	  .exit()
+	  .remove();
+}
+
+</script>
+</head>
+<body>
+	<div id="map"></div>
+	<div id="source">出典：RESAS(地域経済分析システム)</div>
+</body>
